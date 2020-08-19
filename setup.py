@@ -47,6 +47,7 @@ extras_require['examples'] = extras_require['recommended'] + [
     'netcdf4',
     'bzip2',
     'dask',
+    'ibis-framework',
     'scipy',
     'shapely',
     'scikit-image'
