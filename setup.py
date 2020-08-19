@@ -50,11 +50,14 @@ extras_require['examples'] = extras_require['recommended'] + [
     'ibis-framework',
     'scipy',
     'shapely',
-    'scikit-image'
+    'scikit-image',
 ]
 
 if sys.version_info.major > 2:
-    extras_require['examples'].append('spatialpandas')
+    extras_require['examples'].extend([
+        'spatialpandas',
+        'pyarrow <1.0' # spatialpandas incompatibility
+    ])
 
 # Extra third-party libraries
 extras_require['extras'] = extras_require['examples']+[
@@ -71,7 +74,8 @@ extras_require['tests'] = [
     'path.py', 
     'matplotlib >=2.2,<3.1',
     'nbsmoke >=0.2.0',
-    'pytest-cov ==2.5.1'
+    'pytest-cov ==2.5.1',
+    'pytest <6.0'
 ]
 
 extras_require['unit_tests'] = extras_require['examples']+extras_require['tests']
