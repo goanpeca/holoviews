@@ -860,6 +860,13 @@ class TestOverlayPlot(TestBokehPlot):
         plot = bokeh_renderer.get_plot(overlay)
         self.assertEqual([p.projection for p in plot.subplots.values()], ['custom', 'custom'])
 
+    def test_overlay_propagates_batched(self):
+        overlay = NdOverlay({
+            i: Curve([1, 2, 3]).opts(yformatter='%.1f') for i in range(10)
+        }).opts(yformatter='%.3f', legend_limit=1)
+        plot = bokeh_renderer.get_plot(overlay)
+        self.assertEqual(plot.state.yaxis.formatter.format, '%.3f')
+
     def test_overlay_gridstyle_applies(self):
         grid_style = {'grid_line_color': 'blue', 'grid_line_width': 2}
         overlay = (Scatter([(10,10)]).options(gridstyle=grid_style, show_grid=True, size=20)
@@ -880,6 +887,16 @@ class TestOverlayPlot(TestBokehPlot):
         plot = bokeh_renderer.get_plot(overlay)
         for sp in plot.subplots.values():
             self.assertTrue(sp.handles['glyph_renderer'].muted)
+
+    def test_overlay_legend_opts(self):
+        overlay = (
+            Curve(np.random.randn(10).cumsum(), label='A') *
+            Curve(np.random.randn(10).cumsum(), label='B')
+        ).options(legend_opts={'background_fill_alpha': 0.5, 'background_fill_color': 'red'})
+        plot = bokeh_renderer.get_plot(overlay)
+        legend = plot.state.legend
+        self.assertEqual(legend.background_fill_alpha, 0.5)
+        self.assertEqual(legend.background_fill_color, 'red')
 
     def test_active_tools_drag(self):
         curve = Curve([1, 2, 3])

@@ -213,6 +213,9 @@ class ElementPlot(BokehPlot, GenericElementPlot):
         # Whether axes are shared between plots
         self._shared = {'x': False, 'y': False}
 
+        # Flag to check whether plot has been updated
+        self._updated = False
+
 
     def _hover_opts(self, element):
         if self.batched:
@@ -252,6 +255,11 @@ class ElementPlot(BokehPlot, GenericElementPlot):
         tool_list = [
             t for t in cb_tools + self.default_tools + self.tools
             if t not in tool_names]
+
+        tool_list = [
+            tools.HoverTool(tooltips=tooltips, tags=['hv_created'], mode=tl, **hover_opts)
+            if tl in ['vline', 'hline'] else tl for tl in tool_list
+        ]
 
         copied_tools = []
         for tool in tool_list:
@@ -784,6 +792,8 @@ class ElementPlot(BokehPlot, GenericElementPlot):
         options = self._traverse_options(element, 'plot', ['width', 'height'], defaults=False)
         fixed_width = (self.frame_width or options.get('width'))
         fixed_height = (self.frame_height or options.get('height'))
+        constrained_width = options.get('min_width') or options.get('max_width')
+        constrained_height = options.get('min_height') or options.get('max_height')
 
         data_aspect = (self.aspect == 'equal' or self.data_aspect)
         xaxis, yaxis = self.handles['xaxis'], self.handles['yaxis']
@@ -800,7 +810,7 @@ class ElementPlot(BokehPlot, GenericElementPlot):
             xspan = r-l if util.is_number(l) and util.is_number(r) else None
             yspan = t-b if util.is_number(b) and util.is_number(t) else None
 
-            if self.drawn or (fixed_width and fixed_height):
+            if self.drawn or (fixed_width and fixed_height) or (constrained_width or constrained_height):
                 # After initial draw or if aspect is explicit
                 # adjust range to match the plot dimension aspect
                 ratio = self.data_aspect or 1
@@ -811,20 +821,31 @@ class ElementPlot(BokehPlot, GenericElementPlot):
                 else:
                     frame_aspect = plot.frame_height/plot.frame_width
 
-                range_stream = [s for s in self.streams if isinstance(s, RangeXY)]
-                if range_stream and range_stream[0]._triggering:
+                range_streams = [s for s in self.streams if isinstance(s, RangeXY)]
+                if self.drawn:
+                    current_l, current_r = plot.x_range.start, plot.x_range.end
+                    current_b, current_t = plot.y_range.start, plot.y_range.end
+                    current_xspan, current_yspan = (current_r-current_l), (current_t-current_b)
+                else:
+                    current_l, current_r, current_b, current_t = l, r, b, t
+                    current_xspan, current_yspan = xspan, yspan
+
+                if any(rs._triggering for rs in range_streams):
                     # If the event was triggered by a RangeXY stream
                     # event we want to get the latest range span
                     # values so we do not accidentally trigger a
                     # loop of events
-                    xspan = (plot.x_range.end-plot.x_range.start)
-                    yspan = (plot.y_range.end-plot.y_range.start)
+                    l, r, b, t = current_l, current_r, current_b, current_t
+                    xspan, yspan = current_xspan, current_yspan
 
-                size_stream = [s for s in self.streams if isinstance(s, PlotSize)]
-                if size_stream and size_stream[0]._triggering:
-                    # Do not trigger on frame size changes, this can
-                    # trigger event loops if the tick labels change
-                    # the canvas size
+                size_streams = [s for s in self.streams if isinstance(s, PlotSize)]
+                if any(ss._triggering for ss in size_streams) and self._updated:
+                    # Do not trigger on frame size changes, except for
+                    # the initial one which can be important if width
+                    # and/or height constraints have forced different
+                    # aspect. After initial event we skip because size
+                    # changes can trigger event loops if the tick
+                    # labels change the canvas size
                     return
 
                 desired_xspan = yspan*(ratio/frame_aspect)
@@ -834,10 +855,12 @@ class ElementPlot(BokehPlot, GenericElementPlot):
                     not (util.isfinite(xspan) and util.isfinite(yspan))):
                     pass
                 elif desired_yspan >= yspan:
+                    desired_yspan = current_xspan/(ratio/frame_aspect)
                     ypad = (desired_yspan-yspan)/2.
                     b, t = b-ypad, t+ypad
                     yupdate = True
                 else:
+                    desired_xspan = current_yspan*(ratio/frame_aspect)
                     xpad = (desired_xspan-xspan)/2.
                     l, r = l-xpad, r+xpad
                     xupdate = True
@@ -1442,6 +1465,7 @@ class ElementPlot(BokehPlot, GenericElementPlot):
             self._update_ranges(style_element, ranges)
             self._update_plot(key, plot, style_element)
             self._set_active_tools(plot)
+            self._updated = True
 
         if 'hover' in self.handles:
             self._update_hover(element)
@@ -1944,6 +1968,9 @@ class LegendPlot(ElementPlot):
     legend_specs = {'right': 'right', 'left': 'left', 'top': 'above',
                     'bottom': 'below'}
 
+    legend_opts = param.Dict(default={}, doc="""
+        Allows setting specific styling options for the colorbar.""")
+
     def _process_legend(self, plot=None):
         plot = plot or self.handles['plot']
         if not plot.legend:
@@ -1967,8 +1994,9 @@ class LegendPlot(ElementPlot):
             else:
                 legend.location = pos
 
-            # Apply muting
+            # Apply muting and misc legend opts
             for leg in plot.legend:
+                leg.update(**self.legend_opts)
                 for item in leg.items:
                     for r in item.renderers:
                         r.muted = self.legend_muted
@@ -2116,8 +2144,9 @@ class OverlayPlot(GenericOverlayPlot, LegendPlot):
             legend.location = self.legend_offset
             plot.add_layout(legend, pos)
 
-        # Apply muting
+        # Apply muting and misc legend opts
         for leg in plot.legend:
+            leg.update(**self.legend_opts)
             for item in leg.items:
                 for r in item.renderers:
                     r.muted = self.legend_muted
@@ -2338,5 +2367,6 @@ class OverlayPlot(GenericOverlayPlot, LegendPlot):
             self._update_plot(key, plot, element)
             self._set_active_tools(plot)
 
+        self._updated = True
         self._process_legend(element)
         self._execute_hooks(element)
